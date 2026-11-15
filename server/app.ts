@@ -12,8 +12,12 @@ import {
   XKB_LAYOUT,
   type RemapConfig,
 } from "../src/remap/xkb.ts";
+import { RgbError } from "../src/rgb/protocol.ts";
+import { createRgbService, type RgbDeps } from "./rgb.ts";
 
 export interface Deps {
+  /** Keyboard lighting over raw HID. Omit to disable the /api/rgb routes. */
+  rgb?: RgbDeps;
   /** Holds remap.json and hyprland.lua (normally ~/.config/keyboard-config). */
   configDir: string;
   /** Directory that contains `symbols/` (normally ~/.config/xkb). */
@@ -53,6 +57,7 @@ export function createHandler(deps: Deps) {
   const remapPath = join(deps.configDir, "remap.json");
   const luaPath = join(deps.configDir, "hyprland.lua");
   const xkbPath = join(deps.xkbDir, "symbols", XKB_LAYOUT);
+  const rgb = deps.rgb ? createRgbService(deps.rgb) : null;
 
   async function atomicWrite(path: string, text: string): Promise<void> {
     await mkdir(join(path, ".."), { recursive: true });
@@ -108,8 +113,8 @@ export function createHandler(deps: Deps) {
     // Order matters: the xkb file must exist before Hyprland is told to use it.
     await atomicWrite(xkbPath, generateXkbSymbols(config));
     await atomicWrite(remapPath, JSON.stringify(config, null, 2) + "\n");
-    await atomicWrite(luaPath, generateHyprlandLua(matched, true));
-    await evalLua(hyprlandDeviceCalls(matched, true).join("\n"));
+    await atomicWrite(luaPath, generateHyprlandLua(matched, true, config.swapAltSuper));
+    await evalLua(hyprlandDeviceCalls(matched, true, config.swapAltSuper).join("\n"));
     return state();
   }
 
@@ -119,8 +124,8 @@ export function createHandler(deps: Deps) {
     if (error) throw new HttpError(503, error);
     const matched = matchDevices(list.map((k) => k.name), config.deviceMatch);
     if (matched.length === 0) throw new HttpError(409, `No keyboard matches "${config.deviceMatch}"`);
-    await atomicWrite(luaPath, generateHyprlandLua(matched, false));
-    await evalLua(hyprlandDeviceCalls(matched, false).join("\n"));
+    await atomicWrite(luaPath, generateHyprlandLua(matched, false, config.swapAltSuper));
+    await evalLua(hyprlandDeviceCalls(matched, false, config.swapAltSuper).join("\n"));
     return state();
   }
 
@@ -175,11 +180,21 @@ export function createHandler(deps: Deps) {
         await readJson(req);
         return send(res, 200, await revert());
       }
+      if (url.pathname === "/api/rgb" || url.pathname === "/api/rgb/restore") {
+        if (!rgb) throw new HttpError(404, "lighting is not enabled");
+        if (route === "GET /api/rgb") return send(res, 200, await rgb.read());
+        if (route === "POST /api/rgb") return send(res, 200, await rgb.write(await readJson(req)));
+        if (route === "POST /api/rgb/restore") {
+          await readJson(req);
+          return send(res, 200, await rgb.restore());
+        }
+      }
       if (req.method === "GET" && !url.pathname.startsWith("/api/") && (await serveStatic(url.pathname, res))) return;
       throw new HttpError(404, "not found");
     } catch (e) {
       if (e instanceof HttpError) return send(res, e.status, { error: e.message });
       if (e instanceof RemapError) return send(res, 400, { error: e.message });
+      if (e instanceof RgbError) return send(res, e.status, { error: e.message });
       console.error(e);
       return send(res, 500, { error: "internal error" });
     }

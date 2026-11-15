@@ -71,6 +71,19 @@ describe("generators", () => {
       expect(calls.every((l) => !l.startsWith("-"))).toBe(true);
     }
   });
+  it("adds the Alt/Super swap option in both active and reverted states, and only when asked", () => {
+    const swap = 'kb_options = "altwin:swap_alt_win"';
+    for (const active of [true, false]) {
+      expect(hyprlandDeviceCalls(["telink-rover-84-v3-"], active, true)[0]).toContain(swap);
+      expect(hyprlandDeviceCalls(["telink-rover-84-v3-"], active)[0]).not.toContain("kb_options");
+    }
+    expect(generateHyprlandLua(["telink-rover-84-v3-"], false, true)).toContain(swap);
+  });
+  it("parseConfig keeps swapAltSuper, defaults it to false, and rejects non-booleans", () => {
+    expect(parseConfig({ version: 1, deviceMatch: "rover", mappings: {} }).swapAltSuper).toBe(false);
+    expect(parseConfig({ version: 1, deviceMatch: "rover", mappings: {}, swapAltSuper: true }).swapAltSuper).toBe(true);
+    expect(() => parseConfig({ version: 1, deviceMatch: "rover", mappings: {}, swapAltSuper: "yes" })).toThrow(RemapError);
+  });
   it("matches device names case-insensitively", () => {
     expect(matchDevices(["telink-rover-84-v3-", "telink-wireless-gaming-mouse-keyboard"], "ROVER-84")).toEqual(["telink-rover-84-v3-"]);
   });

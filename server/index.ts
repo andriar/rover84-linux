@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHandler } from "./app.ts";
+import { findVendorNode, openHidraw } from "./hidraw.ts";
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.KBCONFIG_PORT ?? 5174);
@@ -15,6 +16,13 @@ const dist = resolve(fileURLToPath(new URL("../dist", import.meta.url)));
 const handler = createHandler({
   configDir: join(configHome, "keyboard-config"),
   xkbDir: join(configHome, "xkb"),
+  rgb: {
+    backupPath: join(configHome, "keyboard-config", "rgb-backup.json"),
+    open: async () => {
+      const node = findVendorNode();
+      return node ? openHidraw(node) : null;
+    },
+  },
   ...(existsSync(dist) ? { staticDir: dist } : {}),
   // The Vite dev server (5173) proxies /api here and forwards its own Host, so allow both.
   allowedHosts: [`127.0.0.1:${PORT}`, `localhost:${PORT}`, "127.0.0.1:5173", "localhost:5173"],

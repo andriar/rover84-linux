@@ -183,7 +183,7 @@ function render(keepSearchFocus = false): void {
   if (s) badges.append(s.active ? badge("Active", "ok") : badge("Not active", "muted"));
   if (dirty()) badges.append(badge("Unapplied changes", "warn"));
 
-  const via = el("a", { href: "/via.html", textContent: "VIA keyboards →", class: "link" });
+  const via = el("span", { class: "toolbar" }, el("a", { href: "/rgb.html", textContent: "Lighting →", class: "link" }), el("a", { href: "/via.html", textContent: "VIA keyboards →", class: "link" }));
   const header = el("header", {}, el("h1", { textContent: "Keyboard Remap" }), el("span", { class: `status${ui.status.error ? " error" : ""}`, textContent: ui.status.text }), via);
   header.querySelector(".status")?.setAttribute("role", "status");
 
@@ -194,11 +194,24 @@ function render(keepSearchFocus = false): void {
     render();
   };
   const matched = s?.matched.length ? s.matched.join(", ") : "no keyboard matches this filter";
+  const swap = el("input", { type: "checkbox", checked: ui.config.swapAltSuper });
+  swap.setAttribute("aria-label", "Swap Alt and Super");
+  swap.onchange = () => {
+    ui.config.swapAltSuper = swap.checked;
+    render();
+  };
+  const swapRow = el(
+    "p",
+    { class: "hint" },
+    el("label", { class: "check" }, swap, " Swap Alt and Super"),
+    " Use this when the keyboard is in Mac mode, so the Win key arrives as Alt. Applies even when you revert the key mappings.",
+  );
   const devices = el(
     "section",
     { class: "card" },
     el("div", { class: "toolbar" }, el("label", { textContent: "Apply to keyboards whose name contains " }, match), el("span", { class: "spacer" }), badges),
     el("p", { class: "hint", textContent: `Matched: ${matched}` }),
+    swapRow,
   );
 
   const listen = el("button", { textContent: ui.listening ? "Listening… (click to stop)" : "Listen to keyboard" });

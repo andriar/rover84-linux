@@ -86,6 +86,16 @@ describe("API", () => {
     expect(keyboards.every((k) => k.layout === "us")).toBe(true);
   });
 
+  it("persists swapAltSuper in the lua file and sends it to Hyprland, also on revert", async () => {
+    const withSwap = { ...config, mappings: {}, swapAltSuper: true };
+    await post("/api/apply", { config: withSwap });
+    expect(readFileSync(join(dir, "kb", "hyprland.lua"), "utf8")).toContain('kb_options = "altwin:swap_alt_win"');
+    expect(calls.some((c) => c[0] === "eval" && (c[1] ?? "").includes("altwin:swap_alt_win"))).toBe(true);
+    const s = await (await post("/api/revert", {})).json();
+    expect(s.config.swapAltSuper).toBe(true);
+    expect(readFileSync(join(dir, "kb", "hyprland.lua"), "utf8")).toContain('kb_layout = "us", kb_variant = "", kb_options = "altwin:swap_alt_win"');
+  });
+
   it("does not write anything when no keyboard matches", async () => {
     const res = await post("/api/apply", { config: { ...config, deviceMatch: "nothing-here" } });
     expect(res.status).toBe(409);

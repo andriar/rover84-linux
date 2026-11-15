@@ -125,3 +125,26 @@ label input[type="text"] {
   font: inherit; padding: 4px 8px; margin-left: 4px; width: 14ch;
   border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text);
 }
+
+/* Lighting view */
+h2 { font-size: 1rem; margin: 0; }
+.controls { display: grid; gap: 14px; margin: 14px 0; }
+.field { display: grid; gap: 4px; }
+.field > label { font-weight: 600; font-size: 0.875rem; }
+.field select {
+  font: inherit; padding: 6px 10px; max-width: 20rem;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text);
+}
+.color-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.color-row input[type="color"] { width: 44px; height: 34px; padding: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); cursor: pointer; }
+.swatches { display: flex; flex-wrap: wrap; gap: 6px; }
+.swatch { width: 28px; height: 28px; padding: 0; border-radius: 50%; border: 2px solid var(--border); }
+.swatch[aria-pressed="true"] { border-color: var(--text); box-shadow: 0 0 0 2px var(--accent); }
+.range { display: flex; align-items: center; gap: 12px; max-width: 20rem; }
+.range input[type="range"] { flex: 1; accent-color: var(--accent); }
+.range-val { min-width: 3ch; font-variant-numeric: tabular-nums; color: var(--muted); }
+.check { display: inline-flex; gap: 6px; align-items: center; font-weight: 400; }
+.preview { height: 14px; border-radius: 999px; margin-top: 12px; border: 1px solid var(--border); }
+.warn-card { border-color: var(--danger); }
+button.danger { border-color: var(--danger); color: var(--danger); }
+@media (max-width: 600px) { .field select, .range { max-width: none; } }
