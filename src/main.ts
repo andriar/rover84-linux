@@ -3,7 +3,8 @@ import { describe, pickerKeycodes, type Category } from "./keycodes";
 import { ansi60 } from "./layout";
 import { exportKeymap, importKeymap } from "./storage";
 import { MockTransport } from "./via/mock";
-import { ViaClient, type Keymap } from "./via/protocol";
+import { ViaClient, type Keymap, type Transport } from "./via/protocol";
+import { requestViaDevice, webHidSupported, type WebHidTransport } from "./via/webhid";
 
 const UNIT = 54;
 const CATEGORIES: Category[] = ["Letters", "Numbers", "Punctuation", "Modifiers", "Function", "Navigation", "Layers", "Special"];
@@ -48,20 +49,37 @@ function setStatus(text: string, error = false): void {
   render();
 }
 
-async function connectMock(): Promise<void> {
+let hidTransport: WebHidTransport | null = null;
+
+async function connect(open: () => Promise<{ transport: Transport; label: string }>): Promise<void> {
   try {
-    const client = new ViaClient(new MockTransport(layout.defaultKeymap, 2));
     setStatus("Connecting…");
+    await hidTransport?.close().catch(() => undefined);
+    hidTransport = null;
+    const { transport, label } = await open();
+    const client = new ViaClient(transport);
     const version = await client.getProtocolVersion();
-    state.keymap = await client.readKeymap(layout.rows, layout.cols);
+    const keymap = await client.readKeymap(layout.rows, layout.cols);
     state.client = client;
+    state.keymap = keymap;
     state.layer = 0;
     state.selected = null;
-    setStatus(`Connected to ${layout.name} · VIA protocol v${version} · ${state.keymap.length} layers`);
+    setStatus(`Connected to ${label} · VIA protocol v${version} · ${keymap.length} layers`);
   } catch (e) {
+    state.client = null;
     setStatus(`Connect failed: ${(e as Error).message}`, true);
   }
 }
+
+const connectMock = () =>
+  connect(async () => ({ transport: new MockTransport(layout.defaultKeymap, 2), label: layout.name }));
+
+const connectKeyboard = () =>
+  connect(async () => {
+    const t = await requestViaDevice();
+    hidTransport = t;
+    return { transport: t, label: `${t.name} (using generic ${layout.name} layout)` };
+  });
 
 async function assign(keycode: number): Promise<void> {
   const { client, selected, layer } = state;
@@ -174,8 +192,12 @@ function renderPicker(): HTMLElement {
 function render(keepSearchFocus = false): void {
   const connected = state.client !== null;
 
-  const connect = el("button", { class: "primary", textContent: connected ? "Reconnect mock device" : "Connect mock device" });
-  connect.onclick = () => void connectMock();
+  const mockBtn = el("button", { class: webHidSupported() ? "" : "primary", textContent: "Mock device" });
+  mockBtn.onclick = () => void connectMock();
+  const hidBtn = el("button", { class: "primary", textContent: "Connect keyboard", disabled: !webHidSupported() });
+  hidBtn.title = webHidSupported() ? "" : "WebHID needs Chrome or Edge";
+  hidBtn.onclick = () => void connectKeyboard();
+  const connect = el("div", { class: "toolbar" }, mockBtn, hidBtn);
 
   const header = el(
     "header",
