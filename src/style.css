@@ -109,3 +109,19 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 @media (max-width: 600px) {
   .picker-head input { flex: 1; min-width: 0; }
 }
+
+/* Remap view */
+.key { flex-direction: column; line-height: 1.15; }
+.key .map { font-size: 0.65rem; color: var(--accent); font-weight: 600; }
+.key.mapped { border-color: var(--accent); }
+.key.locked { opacity: 0.55; }
+.badge { font-size: 0.75rem; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); }
+.badge.ok { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+.badge.warn { border-color: var(--danger); color: var(--danger); }
+.badge.muted { color: var(--muted); }
+.link { color: var(--accent); text-decoration: none; font-size: 0.875rem; }
+.link:hover { text-decoration: underline; }
+label input[type="text"] {
+  font: inherit; padding: 4px 8px; margin-left: 4px; width: 14ch;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text);
+}

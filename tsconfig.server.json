@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "erasableSyntaxOnly": true, "lib": ["ES2022"] },
+  "include": ["server", "src/remap/keys.ts", "src/remap/xkb.ts"]
+}

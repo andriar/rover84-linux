@@ -1,4 +1,5 @@
 import "./style.css";
+import { el } from "./ui/dom";
 import { describe, pickerKeycodes, type Category } from "./keycodes";
 import { ansi60 } from "./layout";
 import { exportKeymap, importKeymap } from "./storage";
@@ -31,18 +32,6 @@ const state: State = {
 
 const layout = ansi60;
 const app = document.getElementById("app")!;
-
-function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  props: Partial<HTMLElementTagNameMap[K]> & { class?: string } = {},
-  ...children: (Node | string)[]
-): HTMLElementTagNameMap[K] {
-  const { class: cls, ...rest } = props;
-  const node = Object.assign(document.createElement(tag), rest);
-  if (cls) node.className = cls;
-  node.append(...children);
-  return node;
-}
 
 function setStatus(text: string, error = false): void {
   state.status = { text, error };
@@ -202,7 +191,8 @@ function render(keepSearchFocus = false): void {
   const header = el(
     "header",
     {},
-    el("h1", { textContent: "Keyboard Config" }),
+    el("h1", { textContent: "Keyboard Config · VIA" }),
+    el("a", { href: "/", textContent: "← OS remap", class: "link" }),
     el("span", { class: `status${state.status.error ? " error" : ""}`, textContent: state.status.text }),
     connect,
   );
