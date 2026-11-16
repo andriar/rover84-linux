@@ -12,6 +12,18 @@ import {
   XKB_LAYOUT,
   type RemapConfig,
 } from "../src/remap/xkb.ts";
+import {
+  MouseError,
+  emptyMouseConfig,
+  isPointerName,
+  mouseDeviceCall,
+  mouseLuaSection,
+  mouseResetCall,
+  parseMouseConfig,
+  stripMouseSection,
+  type GlobalPointer,
+  type MouseConfig,
+} from "../src/mouse/config.ts";
 import { RgbError } from "../src/rgb/protocol.ts";
 import { createRgbService, type RgbDeps } from "./rgb.ts";
 
@@ -33,6 +45,17 @@ export interface Deps {
 interface HyprKeyboard {
   name: string;
   layout: string;
+}
+
+interface HyprMouse {
+  name: string;
+  speed: number;
+  scrollFactor: number;
+}
+
+interface SavedMouse {
+  config: MouseConfig;
+  active: boolean;
 }
 
 const MAX_BODY = 64 * 1024;
@@ -58,6 +81,7 @@ export function createHandler(deps: Deps) {
   const luaPath = join(deps.configDir, "hyprland.lua");
   const xkbPath = join(deps.xkbDir, "symbols", XKB_LAYOUT);
   const rgb = deps.rgb ? createRgbService(deps.rgb) : null;
+  const mousePath = join(deps.configDir, "mouse.json");
 
   async function atomicWrite(path: string, text: string): Promise<void> {
     await mkdir(join(path, ".."), { recursive: true });
@@ -113,7 +137,7 @@ export function createHandler(deps: Deps) {
     // Order matters: the xkb file must exist before Hyprland is told to use it.
     await atomicWrite(xkbPath, generateXkbSymbols(config));
     await atomicWrite(remapPath, JSON.stringify(config, null, 2) + "\n");
-    await atomicWrite(luaPath, generateHyprlandLua(matched, true, config.swapAltSuper));
+    await atomicWrite(luaPath, generateHyprlandLua(matched, true, config.swapAltSuper) + (await mouseSection()));
     await evalLua(hyprlandDeviceCalls(matched, true, config.swapAltSuper).join("\n"));
     return state();
   }
@@ -124,9 +148,98 @@ export function createHandler(deps: Deps) {
     if (error) throw new HttpError(503, error);
     const matched = matchDevices(list.map((k) => k.name), config.deviceMatch);
     if (matched.length === 0) throw new HttpError(409, `No keyboard matches "${config.deviceMatch}"`);
-    await atomicWrite(luaPath, generateHyprlandLua(matched, false, config.swapAltSuper));
+    await atomicWrite(luaPath, generateHyprlandLua(matched, false, config.swapAltSuper) + (await mouseSection()));
     await evalLua(hyprlandDeviceCalls(matched, false, config.swapAltSuper).join("\n"));
     return state();
+  }
+
+  /* ---------- mouse ---------- */
+
+  async function loadMouse(): Promise<SavedMouse | null> {
+    try {
+      const raw = JSON.parse(await readFile(mousePath, "utf8")) as { config?: unknown; active?: unknown };
+      return { config: parseMouseConfig(raw.config), active: raw.active === true };
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw new HttpError(500, `saved mouse config is unreadable: ${(e as Error).message}`);
+    }
+  }
+
+  /** The block the generated hyprland.lua carries for the mouse; empty unless the override is on. */
+  async function mouseSection(): Promise<string> {
+    const saved = await loadMouse();
+    return saved?.active ? mouseLuaSection(saved.config) : "";
+  }
+
+  async function readLua(): Promise<string> {
+    try {
+      return await readFile(luaPath, "utf8");
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") return "";
+      throw e;
+    }
+  }
+
+  async function mice(): Promise<{ list: HyprMouse[]; error?: string }> {
+    try {
+      const data = JSON.parse(await deps.hyprctl(["devices", "-j"])) as { mice?: { name: string; defaultSpeed?: number; scrollFactor?: number }[] };
+      return {
+        list: (data.mice ?? []).filter((m) => isPointerName(m.name)).map((m) => ({ name: m.name, speed: m.defaultSpeed ?? 0, scrollFactor: m.scrollFactor ?? -1 })),
+      };
+    } catch (e) {
+      return { list: [], error: `Hyprland not reachable: ${(e as Error).message}` };
+    }
+  }
+
+  async function globalPointer(): Promise<GlobalPointer> {
+    const opt = async (name: string): Promise<Record<string, unknown>> => {
+      try {
+        return JSON.parse(await deps.hyprctl(["getoption", `input:${name}`, "-j"])) as Record<string, unknown>;
+      } catch {
+        return {};
+      }
+    };
+    const num = (o: Record<string, unknown>, fallback: number) => (typeof o.float === "number" ? o.float : typeof o.int === "number" ? o.int : fallback);
+    const accel = (await opt("accel_profile")).str;
+    return {
+      sensitivity: Math.round(num(await opt("sensitivity"), 0) * 10) / 10,
+      accelProfile: typeof accel === "string" && /^[A-Za-z0-9._-]+$/.test(accel) ? accel : "",
+      scrollFactor: Math.round(num(await opt("scroll_factor"), 1) * 10) / 10,
+      naturalScroll: (await opt("natural_scroll")).bool === true,
+      leftHanded: (await opt("left_handed")).bool === true,
+    };
+  }
+
+  async function mouseState() {
+    const saved = await loadMouse();
+    const { list, error } = await mice();
+    const fallback = list.find((m) => !/rover/i.test(m.name))?.name ?? list[0]?.name;
+    const config = saved?.config ?? emptyMouseConfig(fallback);
+    const live = list.find((m) => m.name === config.device);
+    return { config, active: !!saved?.active && !!live, present: !!live, mice: list, ...(error ? { warning: error } : {}) };
+  }
+
+  async function mouseApply(body: unknown) {
+    const config = parseMouseConfig((body as { config?: unknown } | null)?.config);
+    const { list, error } = await mice();
+    if (error) throw new HttpError(503, error);
+    if (!list.some((m) => m.name === config.device)) throw new HttpError(409, "That mouse isn't connected right now.");
+    const kb = stripMouseSection(await readLua());
+    await atomicWrite(luaPath, (kb && !kb.endsWith("\n") ? kb + "\n" : kb) + mouseLuaSection(config));
+    await atomicWrite(mousePath, JSON.stringify({ config, active: true }, null, 2) + "\n");
+    await evalLua(mouseDeviceCall(config));
+    return mouseState();
+  }
+
+  async function mouseRevert() {
+    const saved = await loadMouse();
+    if (!saved) return mouseState();
+    const { error } = await mice();
+    if (error) throw new HttpError(503, error);
+    await atomicWrite(luaPath, stripMouseSection(await readLua()));
+    await atomicWrite(mousePath, JSON.stringify({ config: saved.config, active: false }, null, 2) + "\n");
+    await evalLua(mouseResetCall(saved.config.device, await globalPointer()));
+    return mouseState();
   }
 
   async function readJson(req: IncomingMessage): Promise<unknown> {
@@ -180,6 +293,12 @@ export function createHandler(deps: Deps) {
         await readJson(req);
         return send(res, 200, await revert());
       }
+      if (route === "GET /api/mouse") return send(res, 200, await mouseState());
+      if (route === "POST /api/mouse") return send(res, 200, await mouseApply(await readJson(req)));
+      if (route === "POST /api/mouse/revert") {
+        await readJson(req);
+        return send(res, 200, await mouseRevert());
+      }
       if (url.pathname === "/api/rgb" || url.pathname === "/api/rgb/restore") {
         if (!rgb) throw new HttpError(404, "lighting is not enabled");
         if (route === "GET /api/rgb") return send(res, 200, await rgb.read());
@@ -193,6 +312,7 @@ export function createHandler(deps: Deps) {
       throw new HttpError(404, "not found");
     } catch (e) {
       if (e instanceof HttpError) return send(res, e.status, { error: e.message });
+      if (e instanceof MouseError) return send(res, 400, { error: e.message });
       if (e instanceof RemapError) return send(res, 400, { error: e.message });
       if (e instanceof RgbError) return send(res, e.status, { error: e.message });
       console.error(e);

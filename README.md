@@ -2,12 +2,13 @@
 
 Unofficial tools for the PressPlay Rover 84 V3 keyboard on Linux (Hyprland): key remap, backlight control, and a generic VIA editor. Not affiliated with PressPlay or Evision. The lighting protocol was worked out by reading the vendor's Windows app (static analysis only, never run) and testing on one keyboard. It writes to the keyboard's own settings, so use it at your own risk; the app backs up the original record first.
 
-Three keyboard tools in one repo.
+Keyboard and mouse tools in one repo.
 
 | Page | For | How |
 |---|---|---|
 | `/` OS-level remap | Any keyboard on Hyprland, including boards with no VIA/QMK (built for the PressPlay Rover 84 V3, Evision `320f:5055`) | Generates an xkb layout and applies it per device with `hyprctl eval` |
 | `/rgb.html` Backlight | PressPlay Rover 84 V3 (Evision `320f:5055`), wired | Raw HID to the vendor interface (usage page `0xFF1C`). Reads and writes one 21-byte lighting record, read back after every write |
+| `/mouse.html` Mouse | Any mouse on Hyprland (built for the PressPlay Nova V3 dongle, `248a:fb01`) | Pointer speed, acceleration, scroll speed, natural scroll and left-handed, applied per device with `hl.device`. Does not talk to the mouse itself, so no DPI or lighting yet |
 | `/via.html` VIA editor | QMK keyboards with VIA enabled | WebHID raw-HID, 32-byte VIA packets. Tested against a mock and a fake HID device only |
 
 ## Run
@@ -69,6 +70,12 @@ end
 
 - `hyprctl eval` treats an argument starting with `--` as a flag. Never send Lua comments to it.
 - `server/` and `src/remap/` are loaded by Node's type stripping: no enums or parameter properties, and relative imports end in `.ts`. `npm run typecheck` enforces this with `erasableSyntaxOnly`.
+
+## Mouse (`/mouse.html`)
+
+Settings are written as a marked block at the end of the same `~/.config/keyboard-config/hyprland.lua` (`-- keyboard-config:mouse begin ... end`), so the remap and the mouse share one `dofile`. Each page rewrites only its own part. "Use defaults" removes the block and puts the device back on your global `input` values, read live from Hyprland. Your chosen values stay in `mouse.json` for next time.
+
+**Verified:** apply and reset on the real mouse (scroll speed read back from `hyprctl devices`), and that Hyprland rejects unknown option names. **Not verified:** pointer speed, acceleration, natural scroll and left-handed by feel, since `hyprctl devices` only reports scroll speed per mouse. **Not built:** DPI, polling rate and lighting, which live in the mouse and need its vendor protocol. The mouse exposes one HID interface with a 32-byte report 5 that may carry it, untested.
 
 ## Lighting (`/rgb.html`)
 

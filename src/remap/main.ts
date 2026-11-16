@@ -1,7 +1,7 @@
 import "../style.css";
 import { interactiveBoard, type CapSpec } from "../ui/board";
 import { attrs, el } from "../ui/dom";
-import { holdFocus, releaseFocus, renderKeepingFocus } from "../ui/focus";
+import { holdFocus, releaseFocus, renderKeepingFocus, requestFocus } from "../ui/focus";
 import { announce, applyBar, shell, switchRow, type BannerSpec } from "../ui/shell";
 import { BOARD, TARGETS, isPhysical, isProtectedSource, keyByCode, type Category, type KeyDef } from "./keys";
 import { describePending, friendlyDeviceName, pendingChanges } from "./pending";
@@ -92,6 +92,7 @@ const apply = () =>
   run("Applying…", async () => {
     adopt(await api("/api/apply", { config: ui.config }), true);
     say(`Applied to ${friendlyDeviceName(ui.server?.matched ?? []) || "the keyboard"}.`, "good");
+    requestFocus("turn-off");
   });
 
 const turnOff = () =>

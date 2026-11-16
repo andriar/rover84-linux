@@ -1,6 +1,6 @@
 import { attrs, el } from "./dom";
 
-export type PageId = "remap" | "rgb" | "via";
+export type PageId = "remap" | "rgb" | "mouse" | "via";
 export type Tone = "good" | "warn" | "bad" | "neutral";
 
 export interface BannerSpec {
@@ -24,6 +24,7 @@ export interface ShellParts {
 const NAV: { id: PageId; href: string; label: string; secondary?: boolean }[] = [
   { id: "remap", href: "/", label: "Key remap" },
   { id: "rgb", href: "/rgb.html", label: "Lighting" },
+  { id: "mouse", href: "/mouse.html", label: "Mouse" },
   { id: "via", href: "/via.html", label: "VIA editor", secondary: true },
 ];
 
