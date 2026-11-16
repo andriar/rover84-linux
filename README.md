@@ -77,6 +77,10 @@ Settings are written as a marked block at the end of the same `~/.config/keyboar
 
 **Verified:** apply and reset on the real mouse (scroll speed read back from `hyprctl devices`), and that Hyprland rejects unknown option names. **Not verified:** pointer speed, acceleration, natural scroll and left-handed by feel, since `hyprctl devices` only reports scroll speed per mouse. **Not built:** DPI, polling rate and lighting, which live in the mouse and need its vendor protocol. The mouse exposes one HID interface with a 32-byte report 5 that may carry it, untested.
 
+### Why DPI and lighting are not built
+
+The vendor's Windows app for the Nova V3 (`WLMouseCfg.exe`, Qt5 plus hidapi) was read statically and never run. It configures the mouse with HID *feature reports* (packets starting `FA 41 ...`) on vendor usage page `0xFFA0`, and looks for VID `248A` PID `5B49`. The mouse tested here (`248a:fb01`, USB name "Telink Wireless Gaming Mouse") has no feature reports and no `0xFFA0` page, with the 2.4G dongle and, as far as could be told, with the cable. While pressing DPI, scroll and buttons, the only traffic was the ordinary pointer report. Its only other vendor-like channel is a 32-byte report 5 with no known format, which on Telink chips can be a firmware-update path, so nothing was sent to it. If your Nova V3 enumerates as `248a:5b49`, it may speak the vendor protocol and be worth trying; issues and captures are welcome.
+
 ## Lighting (`/rgb.html`)
 
 Needs read/write access to the keyboard's `hidraw` node. One-time udev rule (needs root):
