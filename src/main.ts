@@ -1,23 +1,29 @@
 import "./style.css";
-import { el } from "./ui/dom";
 import { describe, pickerKeycodes, type Category } from "./keycodes";
 import { ansi60 } from "./layout";
 import { exportKeymap, importKeymap } from "./storage";
+import { interactiveBoard, type CapSpec } from "./ui/board";
+import { attrs, el } from "./ui/dom";
+import { renderKeepingFocus, requestFocus } from "./ui/focus";
+import { announce, confirmInline, shell } from "./ui/shell";
 import { MockTransport } from "./via/mock";
 import { ViaClient, type Keymap, type Transport } from "./via/protocol";
 import { requestViaDevice, webHidSupported, type WebHidTransport } from "./via/webhid";
 
-const UNIT = 54;
 const CATEGORIES: Category[] = ["Letters", "Numbers", "Punctuation", "Modifiers", "Function", "Navigation", "Layers", "Special"];
+
+type Tone = "good" | "bad" | "info";
 
 interface State {
   client: ViaClient | null;
   keymap: Keymap;
   layer: number;
   selected: { row: number; col: number } | null;
-  category: Category | "All";
+  category: Category;
   search: string;
-  status: { text: string; error: boolean };
+  busy: boolean;
+  confirmReset: boolean;
+  result: { text: string; tone: Tone };
 }
 
 const state: State = {
@@ -27,22 +33,25 @@ const state: State = {
   selected: null,
   category: "Letters",
   search: "",
-  status: { text: "Not connected", error: false },
+  busy: false,
+  confirmReset: false,
+  result: { text: "", tone: "info" },
 };
 
 const layout = ansi60;
 const app = document.getElementById("app")!;
+let hidTransport: WebHidTransport | null = null;
 
-function setStatus(text: string, error = false): void {
-  state.status = { text, error };
+function say(text: string, tone: Tone = "info"): void {
+  state.result = { text, tone };
+  if (text) announce(text, tone === "bad");
   render();
 }
 
-let hidTransport: WebHidTransport | null = null;
-
 async function connect(open: () => Promise<{ transport: Transport; label: string }>): Promise<void> {
   try {
-    setStatus("Connecting…");
+    state.busy = true;
+    say("Connecting…");
     await hidTransport?.close().catch(() => undefined);
     hidTransport = null;
     const { transport, label } = await open();
@@ -53,15 +62,19 @@ async function connect(open: () => Promise<{ transport: Transport; label: string
     state.keymap = keymap;
     state.layer = 0;
     state.selected = null;
-    setStatus(`Connected to ${label} · VIA protocol v${version} · ${keymap.length} layers`);
+    state.busy = false;
+    say(`Connected to ${label} (${keymap.length} layers). VIA protocol v${version}.`, "good");
   } catch (e) {
     state.client = null;
-    setStatus(`Connect failed: ${(e as Error).message}`, true);
+    state.busy = false;
+    const err = e as Error;
+    // Closing the browser's device chooser is a choice, not a failure.
+    if (err.name === "NotFoundError" || /no device selected/i.test(err.message)) say("");
+    else say(`Couldn't connect: ${err.message}`, "bad");
   }
 }
 
-const connectMock = () =>
-  connect(async () => ({ transport: new MockTransport(layout.defaultKeymap, 2), label: layout.name }));
+const connectMock = () => connect(async () => ({ transport: new MockTransport(layout.defaultKeymap, 2), label: "the demo keyboard" }));
 
 const connectKeyboard = () =>
   connect(async () => {
@@ -76,9 +89,9 @@ async function assign(keycode: number): Promise<void> {
   try {
     await client.setKeycode(layer, selected.row, selected.col, keycode);
     state.keymap[layer]![selected.row]![selected.col] = keycode;
-    setStatus(`Layer ${layer} · row ${selected.row} col ${selected.col} → ${describe(keycode).label}`);
+    say(`Layer ${layer} · row ${selected.row} col ${selected.col} → ${describe(keycode).label}`, "good");
   } catch (e) {
-    setStatus(`Write failed: ${(e as Error).message}`, true);
+    say(`Couldn't write: ${(e as Error).message}`, "bad");
   }
 }
 
@@ -87,9 +100,11 @@ async function resetKeymap(): Promise<void> {
   try {
     await state.client.resetKeymap();
     state.keymap = await state.client.readKeymap(layout.rows, layout.cols);
-    setStatus("Keymap reset to defaults");
+    state.confirmReset = false;
+    say("Keymap reset to defaults.", "good");
   } catch (e) {
-    setStatus(`Reset failed: ${(e as Error).message}`, true);
+    state.confirmReset = false;
+    say(`Couldn't reset: ${(e as Error).message}`, "bad");
   }
 }
 
@@ -107,56 +122,56 @@ async function loadKeymapFile(file: File): Promise<void> {
     const next = importKeymap(await file.text(), state.keymap.length, layout.rows, layout.cols);
     const written = await client.writeKeymap(next, state.keymap);
     state.keymap = next;
-    setStatus(`Imported ${file.name} · ${written} keys written`);
+    say(`Imported ${file.name} · ${written} keys written`, "good");
   } catch (e) {
-    setStatus(`Import failed: ${(e as Error).message}`, true);
+    say(`Couldn't import: ${(e as Error).message}`, "bad");
   }
 }
 
-function renderBoard(): HTMLElement {
-  const width = Math.max(...layout.keys.map((k) => k.x + k.w)) * UNIT;
-  const board = el("div", { class: "board" });
-  board.style.width = `${width}px`;
-  board.style.height = `${layout.rows * UNIT}px`;
-  const grid = state.keymap[state.layer];
+/** QMK names are for the keyboard firmware; show plain key names on the board and keep the QMK name in the label. */
+function friendlyLegend(label: string): string {
+  return label
+    .replace(/^[LR]Gui$/, "Super")
+    .replace(/^[LR](Shift|Ctrl|Alt)$/, "$1")
+    .replace(/^MO\((\d+)\)$/, "Fn $1");
+}
 
-  for (const k of layout.keys) {
+function capSpecs(): CapSpec[] {
+  const grid = state.keymap[state.layer];
+  return layout.keys.map((k) => {
     const keycode = grid?.[k.row]?.[k.col] ?? 0;
     const { label, known } = describe(keycode);
-    const selected = state.selected?.row === k.row && state.selected?.col === k.col;
-    const btn = el("button", { class: `key${keycode === 1 ? " trns" : ""}${known ? "" : " unknown"}`, textContent: label });
-    btn.style.left = `${k.x * UNIT}px`;
-    btn.style.top = `${k.y * UNIT}px`;
-    btn.style.width = `${k.w * UNIT - 4}px`;
-    btn.title = `row ${k.row}, col ${k.col} · 0x${keycode.toString(16).padStart(4, "0")}`;
-    btn.setAttribute("aria-pressed", String(selected));
-    btn.onclick = () => {
-      state.selected = { row: k.row, col: k.col };
-      render();
+    return {
+      id: `${k.row}-${k.col}`,
+      x: k.x,
+      y: k.y,
+      w: k.w,
+      legend: friendlyLegend(label),
+      label: `Row ${k.row}, column ${k.col}: ${label}`,
+      pressed: state.selected?.row === k.row && state.selected?.col === k.col,
+      classes: [keycode === 1 ? "trns" : "", known ? "" : "unknown"].filter(Boolean),
+      onClick: () => {
+        state.selected = { row: k.row, col: k.col };
+        render();
+      },
     };
-    board.append(btn);
-  }
-  return board;
+  });
 }
 
-function renderPicker(): HTMLElement {
+function picker(): HTMLElement {
   const query = state.search.trim().toLowerCase();
-  const all = pickerKeycodes(state.keymap.length);
-  const items = all.filter((k) =>
-    query ? `${k.name} ${k.label}`.toLowerCase().includes(query) : state.category === "All" || k.category === state.category,
-  );
+  const items = pickerKeycodes(state.keymap.length).filter((k) => (query ? `${k.name} ${k.label}`.toLowerCase().includes(query) : k.category === state.category));
+  const ready = !!state.selected;
 
-  const search = el("input", { type: "search", placeholder: "Search keycodes…", value: state.search });
-  search.setAttribute("aria-label", "Search keycodes");
+  const search = attrs(el("input", { type: "search", id: "via-search", placeholder: "Search keycodes", value: state.search, disabled: !ready }), { "data-fid": "search" });
   search.oninput = () => {
     state.search = search.value;
-    render(true);
+    render();
   };
 
   const tabs = el("div", { class: "tabs" });
   for (const c of CATEGORIES) {
-    const b = el("button", { textContent: c });
-    b.setAttribute("aria-pressed", String(!query && state.category === c));
+    const b = attrs(el("button", { type: "button", textContent: c }), { "aria-pressed": !query && state.category === c, "data-fid": `tab-${c}` });
     b.onclick = () => {
       state.category = c;
       state.search = "";
@@ -167,46 +182,51 @@ function renderPicker(): HTMLElement {
 
   const grid = el("div", { class: "picker-grid" });
   for (const k of items) {
-    const b = el("button", { textContent: k.label, title: k.name, disabled: !state.selected });
+    const b = attrs(el("button", { type: "button", textContent: k.label, title: k.name, disabled: !ready }), { "data-fid": `pick-${k.code}` });
     b.onclick = () => void assign(k.code);
     grid.append(b);
   }
 
-  const hint = state.selected
-    ? `Assigning to layer ${state.layer}, row ${state.selected.row} col ${state.selected.col}`
-    : "Select a key on the board, then pick a keycode.";
-  return el("section", { class: "card" }, el("div", { class: "picker-head" }, tabs, search), el("p", { class: "hint", textContent: hint }), grid);
+  return el(
+    "section",
+    { class: "card inspector" },
+    el("div", { class: "card-head" }, el("h2", { textContent: "Keycodes" })),
+    el("p", { class: "helper", textContent: ready ? `Layer ${state.layer} · row ${state.selected!.row}, col ${state.selected!.col}` : "Select a key on the board first." }),
+    el("div", { class: "field" }, el("label", { htmlFor: "via-search", class: "caption", textContent: "Search" }), search),
+    tabs,
+    items.length ? grid : el("p", { class: "helper", textContent: `No keycode matches "${state.search}".` }),
+  );
 }
 
-function render(keepSearchFocus = false): void {
-  const connected = state.client !== null;
-
-  const mockBtn = el("button", { class: webHidSupported() ? "" : "primary", textContent: "Mock device" });
-  mockBtn.onclick = () => void connectMock();
-  const hidBtn = el("button", { class: "primary", textContent: "Connect keyboard", disabled: !webHidSupported() });
-  hidBtn.title = webHidSupported() ? "" : "WebHID needs Chrome or Edge";
-  hidBtn.onclick = () => void connectKeyboard();
-  const connect = el("div", { class: "toolbar" }, mockBtn, hidBtn);
-
-  const header = el(
-    "header",
-    {},
-    el("h1", { textContent: "Keyboard Config · VIA" }),
-    el("a", { href: "/", textContent: "← OS remap", class: "link" }),
-    el("span", { class: `status${state.status.error ? " error" : ""}`, textContent: state.status.text }),
-    connect,
+function emptyState(): HTMLElement {
+  const supported = webHidSupported();
+  const hid = attrs(el("button", { type: "button", textContent: "Connect a VIA keyboard", disabled: !supported || state.busy }), { "data-fid": "connect" });
+  hid.onclick = () => void connectKeyboard();
+  const mock = attrs(el("button", { type: "button", textContent: "Try a demo keyboard", disabled: state.busy }), { "data-fid": "demo" });
+  mock.onclick = () => void connectMock();
+  return el(
+    "section",
+    { class: "card empty" },
+    el("h2", { textContent: "For keyboards with VIA firmware" }),
+    el(
+      "p",
+      {},
+      "This editor changes keymaps on QMK keyboards that have VIA enabled. Your Rover 84 doesn't use VIA, so use ",
+      el("a", { href: "/", textContent: "Key remap" }),
+      " and ",
+      el("a", { href: "/rgb.html", textContent: "Lighting" }),
+      " for it instead.",
+    ),
+    el("div", { class: "row" }, hid, mock),
+    supported ? "" : el("p", { class: "helper", textContent: "Needs Chrome or Edge (WebHID)." }),
+    state.result.text ? el("p", { class: `helper${state.result.tone === "bad" ? " bad-text" : ""}`, textContent: state.result.text }) : "",
   );
-  header.querySelector(".status")?.setAttribute("role", "status");
+}
 
-  if (!connected) {
-    app.replaceChildren(el("div", { class: "shell" }, header, el("p", { class: "hint", textContent: "Connect the mock device to start editing a keymap." })));
-    return;
-  }
-
+function boardCard(): HTMLElement {
   const layerTabs = el("div", { class: "tabs" });
   state.keymap.forEach((_, i) => {
-    const b = el("button", { textContent: `Layer ${i}` });
-    b.setAttribute("aria-pressed", String(state.layer === i));
+    const b = attrs(el("button", { type: "button", textContent: `Layer ${i}` }), { "aria-pressed": state.layer === i, "data-fid": `layer-${i}` });
     b.onclick = () => {
       state.layer = i;
       render();
@@ -219,27 +239,56 @@ function render(keepSearchFocus = false): void {
     const f = fileInput.files?.[0];
     if (f) void loadKeymapFile(f);
   };
-  const importBtn = el("button", { textContent: "Import JSON" });
+  const importBtn = attrs(el("button", { type: "button", textContent: "Import JSON" }), { "data-fid": "import" });
   importBtn.onclick = () => fileInput.click();
-  const exportBtn = el("button", { textContent: "Export JSON" });
+  const exportBtn = attrs(el("button", { type: "button", textContent: "Export JSON" }), { "data-fid": "export" });
   exportBtn.onclick = downloadKeymap;
-  const resetBtn = el("button", { textContent: "Reset to defaults" });
-  resetBtn.onclick = () => void resetKeymap();
 
-  const boardCard = el(
-    "section",
-    { class: "card" },
-    el("div", { class: "toolbar" }, layerTabs, el("span", { class: "spacer" }), importBtn, exportBtn, resetBtn, fileInput),
-    el("div", { class: "board-wrap" }, renderBoard()),
-  );
-
-  app.replaceChildren(el("div", { class: "shell" }, header, boardCard, renderPicker()));
-
-  if (keepSearchFocus) {
-    const input = app.querySelector<HTMLInputElement>("input[type=search]");
-    input?.focus();
-    input?.setSelectionRange(input.value.length, input.value.length);
+  let reset: HTMLElement;
+  if (state.confirmReset) {
+    reset = confirmInline({
+      question: "Reset every key on every layer to the firmware default?",
+      yes: "Yes, reset",
+      onYes: () => void resetKeymap(),
+      onCancel: () => {
+        state.confirmReset = false;
+        requestFocus("reset");
+        render();
+      },
+    });
+  } else {
+    reset = attrs(el("button", { type: "button", class: "danger", textContent: "Reset to defaults" }), { "data-fid": "reset" });
+    reset.onclick = () => {
+      state.confirmReset = true;
+      requestFocus("confirm-cancel");
+      render();
+    };
   }
+
+  const result = state.result.text ? el("p", { class: `result-line ${state.result.tone === "info" ? "" : state.result.tone}`.trim(), textContent: state.result.text }) : "";
+  return el(
+    "section",
+    { class: "card board-card" },
+    el("div", { class: "card-head" }, layerTabs, el("span", { class: "grow" }), importBtn, exportBtn, reset, fileInput),
+    result,
+    interactiveBoard(capSpecs(), { cols: Math.max(...layout.keys.map((k) => k.x + k.w)), rows: Math.max(...layout.keys.map((k) => k.y + 1)) }),
+  );
+}
+
+function draw(): void {
+  const connected = state.client !== null;
+  app.replaceChildren(
+    shell({
+      page: "via",
+      title: "VIA editor",
+      chip: connected ? { text: "Connected", tone: "good" } : { text: "Not connected", tone: "neutral" },
+      main: connected ? [el("div", { class: "two-col remap" }, boardCard(), picker())] : [emptyState()],
+    }),
+  );
+}
+
+function render(): void {
+  renderKeepingFocus(app, draw);
 }
 
 render();
