@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHandler } from "./app.ts";
 import { findVendorNode, openHidraw } from "./hidraw.ts";
+import { findNovaNode, openNova } from "./novahid.ts";
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.KBCONFIG_PORT ?? 5174);
@@ -21,6 +22,12 @@ const handler = createHandler({
     open: async () => {
       const node = findVendorNode();
       return node ? openHidraw(node) : null;
+    },
+  },
+  nova: {
+    open: async () => {
+      const node = findNovaNode();
+      return node ? openNova(node) : null;
     },
   },
   ...(existsSync(dist) ? { staticDir: dist } : {}),

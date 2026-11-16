@@ -26,6 +26,18 @@ const ui = {
   result: { text: "", tone: "info" as Tone },
 };
 
+interface NovaState {
+  present: boolean;
+  dpiStage?: number | null;
+  stages?: number;
+}
+
+const live = {
+  nova: null as NovaState | null,
+  error: "",
+  checked: false,
+};
+
 const app = document.getElementById("app")!;
 const clone = <T,>(v: T): T => structuredClone(v);
 
@@ -93,6 +105,51 @@ const reset = () =>
     say("Back to your Hyprland defaults. Your settings here are saved for next time.", "good");
     requestFocus("apply");
   });
+
+/* ---------- live status (read-only) ---------- */
+
+async function pollStatus(): Promise<void> {
+  try {
+    const res = await fetch("/api/mouse/status");
+    const data = (await res.json().catch(() => ({}))) as NovaState & { error?: string };
+    if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+    live.nova = data;
+    live.error = "";
+  } catch (e) {
+    live.nova = null;
+    live.error = (e as Error).message;
+  }
+  live.checked = true;
+  // Update in place: a full render would replace a slider that is being dragged.
+  document.getElementById("nova-status")?.replaceWith(statusBody());
+}
+
+function statusBody(): HTMLElement {
+  const box = attrs(el("div", { id: "nova-status", class: "stack" }), { role: "status" });
+  const n = live.nova;
+  if (!live.checked) box.append(el("p", { class: "helper", textContent: "Reading the mouse…" }));
+  else if (live.error) {
+    const perm = /EACCES|EPERM|permission/i.test(live.error);
+    box.append(
+      el("p", { class: "result-line bad", textContent: perm ? "This app can't open the mouse." : "Couldn't read the mouse." }),
+      el("p", { class: "helper", textContent: perm ? "Install the udev rule for the Nova V3 once (README, Mouse section), then unplug and replug it." : live.error }),
+    );
+  } else if (n && !n.present) box.append(el("p", { class: "helper", textContent: "The Nova V3 dongle or cable isn't plugged in." }));
+  else if (n) {
+    const stage = n.dpiStage;
+    box.append(
+      el("p", { class: "label", textContent: stage ? `DPI stage ${stage} of ${n.stages ?? 6}` : "DPI stage unknown" }),
+      el("p", { class: "helper", textContent: stage ? "Press the DPI button on the mouse and this follows it. The DPI value itself isn't readable yet." : "The mouse reported a value this app doesn't recognize." }),
+    );
+  }
+  return box;
+}
+
+function statusCard(): HTMLElement {
+  const refresh = attrs(el("button", { type: "button", class: "ghost", textContent: "↻ Refresh" }), { "data-fid": "status-refresh" });
+  refresh.onclick = () => void pollStatus();
+  return el("section", { class: "card" }, el("div", { class: "card-head" }, el("h2", { textContent: "Mouse status" }), refresh), statusBody());
+}
 
 /* ---------- pending ---------- */
 
@@ -224,7 +281,7 @@ function scrollCard(): HTMLElement {
 }
 
 function notice(): HTMLElement {
-  return el("section", { class: "card" }, el("h2", { textContent: "Not available here yet" }), el("p", { class: "helper", textContent: "DPI, polling rate and lighting are set inside the mouse, not by Hyprland. Those need the mouse's own protocol, which this app doesn't speak yet." }));
+  return el("section", { class: "card" }, el("h2", { textContent: "Not available here yet" }), el("p", { class: "helper", textContent: "Setting DPI, polling rate and lighting needs commands that write to the mouse, and their effects aren't known. This app only reads the mouse, it never writes to it." }));
 }
 
 function bar(): HTMLElement {
@@ -299,7 +356,7 @@ function draw(): void {
       : s.active
         ? { text: "Settings on", tone: "good" as const }
         : { text: "Defaults", tone: "neutral" as const };
-  app.replaceChildren(shell({ page: "mouse", title: "Mouse", chip, banner: banner(), main: [el("div", { class: "two-col light" }, pointerCard(), scrollCard()), notice()], bar: bar() }));
+  app.replaceChildren(shell({ page: "mouse", title: "Mouse", chip, banner: banner(), main: [el("div", { class: "two-col light" }, pointerCard(), scrollCard()), statusCard(), notice()], bar: bar() }));
 }
 
 function render(): void {
@@ -308,3 +365,10 @@ function render(): void {
 
 render();
 void load();
+
+window.addEventListener("focus", () => void pollStatus());
+// Follows the DPI button. Only while the page is visible, and one small read every 2 seconds.
+window.setInterval(() => {
+  if (document.visibilityState === "visible") void pollStatus();
+}, 2000);
+void pollStatus();

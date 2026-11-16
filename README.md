@@ -77,6 +77,17 @@ Settings are written as a marked block at the end of the same `~/.config/keyboar
 
 **Verified:** apply and reset on the real mouse (scroll speed read back from `hyprctl devices`), and that Hyprland rejects unknown option names. **Not verified:** pointer speed, acceleration, natural scroll and left-handed by feel, since `hyprctl devices` only reports scroll speed per mouse. **Not built:** DPI, polling rate and lighting, which live in the mouse and need its vendor protocol. The mouse exposes one HID interface with a 32-byte report 5 that may carry it, untested.
 
+### Live status (read-only)
+
+The Mouse page also shows which DPI stage the mouse is on (1 to 6) and follows the DPI button. It reads the Nova V3 dongle (`248a:fb01`) over its raw HID report 5 with the vendor app's read command only; the code cannot build any other command. It needs read/write access to that `hidraw` node, once, with root:
+
+```
+printf '%s\n' 'KERNEL=="hidraw*", ATTRS{idVendor}=="248a", ATTRS{idProduct}=="fb01", TAG+="uaccess"' | sudo tee /etc/udev/rules.d/71-nova-v3.rules
+sudo udevadm control --reload && sudo udevadm trigger
+```
+
+Then replug the mouse. Without the rule the card says the app can't open the mouse and the rest of the page still works. **Verified:** the stage number follows the DPI button on one real Nova V3. **Not verified:** the DPI value of each stage, and what byte `0x10` (always `0x1F` here, maybe battery) means.
+
 ### Why DPI and lighting are not built
 
 The vendor's Windows app for the Nova V3 (`WLMouseCfg.exe`, Qt5 plus hidapi) was read statically and never run. It configures the mouse with HID *feature reports* (packets starting `FA 41 ...`) on vendor usage page `0xFFA0`, and looks for VID `248A` PID `5B49`. The mouse tested here (`248a:fb01`, USB name "Telink Wireless Gaming Mouse") has no feature reports and no `0xFFA0` page, with the 2.4G dongle and, as far as could be told, with the cable. While pressing DPI, scroll and buttons, the only traffic was the ordinary pointer report. Its only other vendor-like channel is a 32-byte report 5 with no known format, which on Telink chips can be a firmware-update path, so nothing was sent to it. If your Nova V3 enumerates as `248a:5b49`, it may speak the vendor protocol and be worth trying; issues and captures are welcome.

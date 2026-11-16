@@ -24,10 +24,14 @@ import {
   type GlobalPointer,
   type MouseConfig,
 } from "../src/mouse/config.ts";
+import { NovaError, STATUS_ADDR, STATUS_LEN, parseStatus } from "../src/mouse/nova.ts";
 import { RgbError } from "../src/rgb/protocol.ts";
+import type { NovaTransport } from "./novahid.ts";
 import { createRgbService, type RgbDeps } from "./rgb.ts";
 
 export interface Deps {
+  /** Read-only status of the Nova V3 dongle over raw HID. Omit to disable /api/mouse/status. */
+  nova?: { open: () => Promise<NovaTransport | null> };
   /** Keyboard lighting over raw HID. Omit to disable the /api/rgb routes. */
   rgb?: RgbDeps;
   /** Holds remap.json and hyprland.lua (normally ~/.config/keyboard-config). */
@@ -82,6 +86,8 @@ export function createHandler(deps: Deps) {
   const xkbPath = join(deps.xkbDir, "symbols", XKB_LAYOUT);
   const rgb = deps.rgb ? createRgbService(deps.rgb) : null;
   const mousePath = join(deps.configDir, "mouse.json");
+  // One HID conversation at a time on the dongle.
+  let novaQueue: Promise<unknown> = Promise.resolve();
 
   async function atomicWrite(path: string, text: string): Promise<void> {
     await mkdir(join(path, ".."), { recursive: true });
@@ -242,6 +248,28 @@ export function createHandler(deps: Deps) {
     return mouseState();
   }
 
+  async function novaStatus() {
+    const open = deps.nova?.open;
+    if (!open) throw new HttpError(404, "mouse status is not enabled");
+    const run = async () => {
+      let t: NovaTransport | null;
+      try {
+        t = await open();
+      } catch (e) {
+        throw new HttpError(503, `cannot open the mouse: ${(e as Error).message}`);
+      }
+      if (!t) return { present: false };
+      try {
+        return { present: true, ...parseStatus(await t.read(STATUS_ADDR, STATUS_LEN)) };
+      } finally {
+        t.close();
+      }
+    };
+    const result = novaQueue.then(run, run);
+    novaQueue = result.catch(() => undefined);
+    return result;
+  }
+
   async function readJson(req: IncomingMessage): Promise<unknown> {
     if (!(req.headers["content-type"] ?? "").startsWith("application/json")) throw new HttpError(415, "content-type must be application/json");
     const chunks: Buffer[] = [];
@@ -293,6 +321,7 @@ export function createHandler(deps: Deps) {
         await readJson(req);
         return send(res, 200, await revert());
       }
+      if (route === "GET /api/mouse/status") return send(res, 200, await novaStatus());
       if (route === "GET /api/mouse") return send(res, 200, await mouseState());
       if (route === "POST /api/mouse") return send(res, 200, await mouseApply(await readJson(req)));
       if (route === "POST /api/mouse/revert") {
@@ -312,6 +341,7 @@ export function createHandler(deps: Deps) {
       throw new HttpError(404, "not found");
     } catch (e) {
       if (e instanceof HttpError) return send(res, e.status, { error: e.message });
+      if (e instanceof NovaError) return send(res, e.status, { error: e.message });
       if (e instanceof MouseError) return send(res, 400, { error: e.message });
       if (e instanceof RemapError) return send(res, 400, { error: e.message });
       if (e instanceof RgbError) return send(res, e.status, { error: e.message });
