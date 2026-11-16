@@ -1,4 +1,6 @@
-# keyboard-config
+# rover84-linux
+
+Unofficial tools for the PressPlay Rover 84 V3 keyboard on Linux (Hyprland): key remap, backlight control, and a generic VIA editor. Not affiliated with PressPlay or Evision. The lighting protocol was worked out by reading the vendor's Windows app (static analysis only, never run) and testing on one keyboard. It writes to the keyboard's own settings, so use it at your own risk; the app backs up the original record first.
 
 Three keyboard tools in one repo.
 
@@ -33,7 +35,7 @@ If the keyboard is in Mac mode its firmware already swaps Alt and Win, so Super 
 ## Make it survive `hyprctl reload`
 
 Hyprland 0.56 uses `hyprland.lua`. A reload re-reads it and resets per-device settings, so add this block
-(Master's config has it after the INPUT section). The guard means a missing or broken file never breaks the config:
+(for example after the INPUT section). The guard means a missing or broken file never breaks the config:
 
 ```lua
 do
@@ -82,3 +84,7 @@ Then replug the keyboard. Protocol (64-byte reports, byte 0 = 4): `Begin` (cmd 1
 Safety: nothing is written until you press Apply. The app refuses to write when the stored record does not look like a lighting record, saves the original record once to `~/.config/keyboard-config/rgb-backup.json`, and **Restore original** writes it back.
 
 **Verified on the real keyboard:** read, write and read-back; Static mode with a red color lit the keys. **Not verified:** every other mode, speed direction, the multicolor flag, record bytes 0 and 4, and whether the setting survives a power cycle.
+
+## License
+
+MIT. See `LICENSE`.

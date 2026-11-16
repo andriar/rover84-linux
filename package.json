@@ -1,9 +1,10 @@
 {
-  "name": "keyboard-config",
+  "name": "rover84-linux",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
-  "description": "Web app to configure QMK/VIA keyboards over WebHID (mock device included)",
+  "description": "Unofficial Linux tools for the PressPlay Rover 84 V3: Hyprland key remap, backlight control, VIA editor",
   "scripts": {
     "dev": "vite",
     "build": "npm run typecheck && vite build",
